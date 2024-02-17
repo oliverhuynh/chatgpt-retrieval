@@ -1,0 +1,8 @@
+{
+  "name": "chatgpt-retrieval",
+  "version": "1.0.0",
+  "main": "index.js",
+  "repository": "https://github.com/techleadhd/chatgpt-retrieval.git",
+  "author": "Oliver Huynh <oliver@jufist.com>",
+  "license": "MIT"
+}

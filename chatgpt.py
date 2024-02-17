@@ -21,7 +21,16 @@ from langchain_openai.llms import OpenAI
 # from langchain.vectorstores import Chroma
 from langchain_community.vectorstores import Chroma
 
-import constants
+
+# Check if constants.py exists in the current working directory
+if not os.path.exists("constants.py"):
+    raise FileNotFoundError("constants.py not found in the current directory")
+
+import importlib.util
+# Load constants.py from the current working directory
+spec = importlib.util.spec_from_file_location("constants", "constants.py")
+constants = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(constants)
 
 os.environ["OPENAI_API_KEY"] = constants.APIKEY
 
