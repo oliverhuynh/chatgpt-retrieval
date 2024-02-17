@@ -3,3 +3,7 @@ __pycache__
 persist/
 .DS_Store
 .chroma/
+/tmp
+/sass
+*.log
+.env
