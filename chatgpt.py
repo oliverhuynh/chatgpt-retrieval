@@ -2,6 +2,10 @@ import os
 import sys
 
 import openai
+openai.proxy = {
+            "http": "http://127.0.0.1:7890",
+            "https": "http://127.0.0.1:7890"
+        }
 
 from langchain.chains import ConversationalRetrievalChain, RetrievalQA
 # from langchain.chat_models import ChatOpenAI
@@ -13,7 +17,7 @@ from langchain_openai import OpenAIEmbeddings
 from langchain.indexes import VectorstoreIndexCreator
 from langchain.indexes.vectorstore import VectorStoreIndexWrapper
 # from langchain.llms import OpenAI
-from langchain_community.llms import OpenAI
+from langchain_openai.llms import OpenAI
 # from langchain.vectorstores import Chroma
 from langchain_community.vectorstores import Chroma
 
