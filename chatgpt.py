@@ -40,7 +40,9 @@ logger=getlogger("chatgpt")
 model="gpt-3.5-turbo"
 
 from openai import OpenAI
-client = OpenAI()
+# client = OpenAI()
+import httpx
+client = OpenAI(timeout=httpx.Timeout(15.0, read=5.0, write=10.0, connect=3.0))
 
 # Enable to save to disk & reuse the model (for repeated queries on the same data)
 PERSIST = False
