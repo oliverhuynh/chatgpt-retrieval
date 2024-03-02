@@ -51,22 +51,27 @@ query = None
 if len(sys.argv) > 1:
   query = sys.argv[1]
 
-if PERSIST and os.path.exists("persist"):
-  print("Reusing index...\n")
-  vectorstore = Chroma(persist_directory="persist", embedding_function=OpenAIEmbeddings())
-  index = VectorStoreIndexWrapper(vectorstore=vectorstore)
-else:
-  #loader = TextLoader("data/data.txt") # Use this line if you only need data.txt
-  loader = DirectoryLoader("data/")
-  if PERSIST:
-    index = VectorstoreIndexCreator(vectorstore_kwargs={"persist_directory":"persist"}).from_loaders([loader])
+# Check if the data directory is empty
+data_dir = "data/"
+chain = False
+if os.listdir(data_dir):
+  if PERSIST and os.path.exists("persist"):
+    print("Reusing index...\n")
+    vectorstore = Chroma(persist_directory="persist", embedding_function=OpenAIEmbeddings())
+    index = VectorStoreIndexWrapper(vectorstore=vectorstore)
   else:
-    index = VectorstoreIndexCreator().from_loaders([loader])
+    #loader = TextLoader("data/data.txt") # Use this line if you only need data.txt
+    loader = DirectoryLoader("data/")
+    # @TODO: Fix bug: If data directory is empty, this would cause issue
+    if PERSIST:
+      index = VectorstoreIndexCreator(vectorstore_kwargs={"persist_directory":"persist"}).from_loaders([loader])
+    else:
+      index = VectorstoreIndexCreator().from_loaders([loader])
 
-chain = ConversationalRetrievalChain.from_llm(
-  llm=ChatOpenAI(model="gpt-3.5-turbo"),
-  retriever=index.vectorstore.as_retriever(search_kwargs={"k": 1}),
-)
+  chain = ConversationalRetrievalChain.from_llm(
+    llm=ChatOpenAI(model="gpt-3.5-turbo"),
+    retriever=index.vectorstore.as_retriever(search_kwargs={"k": 1}),
+  )
 
 # Modify this part to include a direct call to the GPT model
 def is_uncertain(answer):
@@ -83,11 +88,13 @@ def get_openai_response(prompt, model="gpt-3.5-turbo"):  # Adjust model as neede
 
 def query_both_sources(query, chat_history):
     # Query the custom data via the retriever first to check for an uncertain response
-    logger.debug("Going to custom data response")
-    custom_data_response = chain({"question": query, "chat_history": chat_history, "timeout": 10})
+    # logger.debug("Going to custom data response")
+    custom_data_response = False
+    if chain: 
+        custom_data_response = chain({"question": query, "chat_history": chat_history, "timeout": 10})
 
     # If the custom data's answer is uncertain, then query the GPT model
-    if 'answer' in custom_data_response and is_uncertain(custom_data_response['answer']):
+    if not custom_data_response or ('answer' in custom_data_response and is_uncertain(custom_data_response['answer'])):
         logger.debug("Custom data response is uncertain, going to OpenAI response")
         # Only now do we query the GPT model because the custom data was uncertain
         direct_response = get_openai_response(query, model=model)
