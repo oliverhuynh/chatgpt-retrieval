@@ -1,6 +1,7 @@
 import os
 import sys
-
+import json
+import argparse
 import openai
 openai.proxy = {
             "http": "http://127.0.0.1:7890",
@@ -21,7 +22,6 @@ from langchain_openai.llms import OpenAI
 # from langchain.vectorstores import Chroma
 from langchain_community.vectorstores import Chroma
 
-
 # Check if constants.py exists in the current working directory
 if not os.path.exists("constants.py"):
     raise FileNotFoundError("constants.py not found in the current directory")
@@ -37,34 +37,45 @@ os.environ["OPENAI_API_KEY"] = constants.APIKEY
 from oliver_framework.utils.logging import getlogger
 logger=getlogger("chatgpt")
 
+# Variables
 model="gpt-3.5-turbo"
+temperature=0.7
+timeout=30
 
 from openai import OpenAI
 # client = OpenAI()
 import httpx
-client = OpenAI(timeout=httpx.Timeout(15.0, read=5.0, write=10.0, connect=3.0))
+client = OpenAI(timeout=httpx.Timeout(timeout, read=timeout / 2, write=timeout / 2, connect=10))
 
 # Enable to save to disk & reuse the model (for repeated queries on the same data)
-PERSIST = False
+PERSIST = True
 
-query = None
-if len(sys.argv) > 1:
-  query = sys.argv[1]
+# Create an argument parser
+parser = argparse.ArgumentParser()
+parser.add_argument('--prompt', '-p', help='Prompt for the query')
+parser.add_argument('--local', '-l', help='Use local data only')
+parser.add_argument('--data_dir', default='data/', help='Directory for data (default: data/)')
+parser.add_argument('--persist_dir', default='.chroma', help='Directory for chroma dir (default: .chroma)')
 
-# Check if the data directory is empty
-data_dir = "data/"
+args, unknown_args = parser.parse_known_args()
+is_prompt = args.prompt if args.prompt else None
+is_local = args.local if args.local else None
+data_dir = args.data_dir
+persist_dir = args.persist_dir
+
+query = ' '.join(unknown_args)
+
 chain = False
 if os.listdir(data_dir):
   if PERSIST and os.path.exists("persist"):
-    print("Reusing index...\n")
-    vectorstore = Chroma(persist_directory="persist", embedding_function=OpenAIEmbeddings())
+    logger.debug("Reusing index...\n")
+    vectorstore = Chroma(persist_directory=persist_dir, embedding_function=OpenAIEmbeddings())
     index = VectorStoreIndexWrapper(vectorstore=vectorstore)
   else:
     #loader = TextLoader("data/data.txt") # Use this line if you only need data.txt
-    loader = DirectoryLoader("data/")
-    # @TODO: Fix bug: If data directory is empty, this would cause issue
+    loader = DirectoryLoader(data_dir)
     if PERSIST:
-      index = VectorstoreIndexCreator(vectorstore_kwargs={"persist_directory":"persist"}).from_loaders([loader])
+      index = VectorstoreIndexCreator(vectorstore_kwargs={"persist_directory":persist_dir}).from_loaders([loader])
     else:
       index = VectorstoreIndexCreator().from_loaders([loader])
 
@@ -76,13 +87,23 @@ if os.listdir(data_dir):
 # Modify this part to include a direct call to the GPT model
 def is_uncertain(answer):
     # Define phrases that indicate uncertainty
-    uncertain_phrases = ["i don't know", "not sure", "unsure", "maybe", "don't have that information"]
+    uncertain_phrases = ["i don't know", "not sure", "unsure", "maybe", "don't have that information", "don't have enough"]
     # Check if the answer contains any of the uncertain phrases
     return any(phrase in answer.lower() for phrase in uncertain_phrases)
 
 def get_openai_response(prompt, model="gpt-3.5-turbo"):  # Adjust model as needed
-    response = client.chat.completions.create(model=model,
-    messages=[{"role": "user", "content": prompt}])
+    # Check if prompt is a string, if not, use the input object
+    if not isinstance(prompt, str):
+        messages = prompt["messages"]
+        model = prompt.get("model", model)
+    else:
+        messages = [{"role": "user", "content": prompt}]
+
+    response = client.chat.completions.create(
+        model=model,
+        messages=messages
+    )
+
     # Assuming the response format aligns with the chat model's response structure
     return response.choices[0].message.content.strip()
 
@@ -90,14 +111,47 @@ def query_both_sources(query, chat_history):
     # Query the custom data via the retriever first to check for an uncertain response
     # logger.debug("Going to custom data response")
     custom_data_response = False
+    query_chat_history = []
+
+    try:
+        # Try to parse query as JSON
+        query_json = json.loads(query)
+
+        # If successful, assume query is a JSON string representing the chained prompt
+        query_chat_history = [(turn["question"], turn["answer"]) for turn in query_json["chat_history"]]
+        query_json["chat_history"] = query_chat_history
+    except json.JSONDecodeError:
+        # If parsing as JSON fails, assume query is a normal question string
+        query_json = {"question": query, "chat_history": chat_history, "timeout": 10}
+
+    # Retrieve chain
     if chain: 
-        custom_data_response = chain({"question": query, "chat_history": chat_history, "timeout": 10})
+        logger.debug("Ask based on local data first")
+        logger.debug(f"Query: {query_json}")
+        custom_data_response = chain(query_json)
 
     # If the custom data's answer is uncertain, then query the GPT model
-    if not custom_data_response or ('answer' in custom_data_response and is_uncertain(custom_data_response['answer'])):
+    if not is_local and not custom_data_response or ('answer' in custom_data_response and is_uncertain(custom_data_response['answer'])):
         logger.debug("Custom data response is uncertain, going to OpenAI response")
-        # Only now do we query the GPT model because the custom data was uncertain
-        direct_response = get_openai_response(query, model=model)
+        messages = []
+
+        # @TODO: Init role system
+        # query_chat_hisory is array of tuples
+        for item in query_chat_history:
+            messages.append({"role": "user", "content": item[0]})
+            messages.append({"role": "assistant", "content": item[1]}) 
+
+        # Convert query_json to the format expected by get_openai_response
+        messages.append({"role": "user", "content": query_json["question"]})
+
+        gpt_request = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature
+        }
+        logger.debug("Ask based on remote data")
+        logger.debug(f"Args: {gpt_request}")
+        direct_response = get_openai_response(gpt_request)
         return direct_response
     else:
         # If the custom data's answer is confident enough, use it directly
@@ -107,7 +161,8 @@ def query_both_sources(query, chat_history):
 chat_history = []
 while True:
     if not query:
-        sys.exit()
+        if not is_prompt:
+            sys.exit()
         query = input("Prompt: ")
     if query in ['quit', 'q', 'exit']:
         sys.exit()
