@@ -87,7 +87,7 @@ if os.listdir(data_dir):
 # Modify this part to include a direct call to the GPT model
 def is_uncertain(answer):
     # Define phrases that indicate uncertainty
-    uncertain_phrases = ["i don't know", "not sure", "unsure", "maybe", "don't have that information", "don't have enough"]
+    uncertain_phrases = ["i don't know", "not sure", "unsure", "maybe", "I don't have", "don't have that information", "don't have enough"]
     # Check if the answer contains any of the uncertain phrases
     return any(phrase in answer.lower() for phrase in uncertain_phrases)
 
