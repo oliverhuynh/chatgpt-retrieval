@@ -39,7 +39,7 @@ logger=getlogger("chatgpt")
 
 # Variables
 model="gpt-3.5-turbo"
-temperature=0.7
+temperature=0.2
 timeout=30
 
 from openai import OpenAI
@@ -87,7 +87,7 @@ if os.listdir(data_dir):
 # Modify this part to include a direct call to the GPT model
 def is_uncertain(answer):
     # Define phrases that indicate uncertainty
-    uncertain_phrases = ["i don't know", "not sure", "unsure", "maybe", "I don't have", "don't have that information", "don't have enough"]
+    uncertain_phrases = ["I'm sorry,", "i don't know", "not sure", "unsure", "maybe", "I don't have", "don't have that information", "don't have enough"]
     # Check if the answer contains any of the uncertain phrases
     return any(phrase in answer.lower() for phrase in uncertain_phrases)
 
