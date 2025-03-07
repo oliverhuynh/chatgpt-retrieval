@@ -55,7 +55,10 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--prompt', '-p', help='Prompt for the query')
 parser.add_argument('--local', '-l', help='Use local data only')
 parser.add_argument('--data_dir', default='data/', help='Directory for data (default: data/)')
-parser.add_argument('--persist_dir', default='.chroma', help='Directory for chroma dir (default: .chroma)')
+
+# .chroma is not usable
+# parser.add_argument('--persist_dir', default='.chroma', help='Directory for chroma dir (default: .chroma)')
+parser.add_argument('--persist_dir', default='tmp/x', help='Directory for chroma dir (default: .chroma)')
 
 args, unknown_args = parser.parse_known_args()
 is_prompt = args.prompt if args.prompt else None
