@@ -2,7 +2,10 @@ import os
 import sys
 import json
 import argparse
+from pathlib import Path
 import openai
+from dotenv import load_dotenv
+
 openai.proxy = {
             "http": "http://127.0.0.1:7890",
             "https": "http://127.0.0.1:7890"
@@ -22,30 +25,44 @@ from langchain_openai.llms import OpenAI
 # from langchain.vectorstores import Chroma
 from langchain_community.vectorstores import Chroma
 
-# Check if constants.py exists in the current working directory
-if not os.path.exists("constants.py"):
-    raise FileNotFoundError("constants.py not found in the current directory")
+# Load .env into the environment
+load_dotenv(dotenv_path=Path(".env"), override=False)
 
-import importlib.util
-# Load constants.py from the current working directory
-spec = importlib.util.spec_from_file_location("constants", "constants.py")
-constants = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(constants)
+# Prefer environment-provided key; fail if missing
+active_key = os.environ.get("OPENAI_KEY") or os.environ.get("OPENAI_API_KEY")
+if not active_key:
+    raise RuntimeError("OPENAI_KEY not set in environment or .env")
+os.environ["OPENAI_API_KEY"] = active_key
+masked_key = (
+    f"{active_key[:4]}...{active_key[-4:]}"
+    if active_key and len(active_key) > 8 else "<unset>"
+)
 
-os.environ["OPENAI_API_KEY"] = constants.APIKEY
+# Allow overriding the OpenAI API host (useful for self-hosted proxies).
+openai_target = os.getenv("OPENAI_TARGET", "https://api.openai.com")
+base_url = f"{openai_target.rstrip('/')}/v1"
+os.environ["OPENAI_BASE_URL"] = base_url
+os.environ["OPENAI_API_BASE"] = base_url  # backward compatibility
+openai.base_url = base_url  # ensure global default for any client created internally
+model=os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")
 
 from oliver_framework.utils.logging import getlogger
 logger=getlogger("chatgpt")
+logger.info(f"Using OpenAI base_url: {base_url}")
+logger.info(f"Using OpenAI key: {masked_key}")
+logger.info(f"Using OpenAI model: {model}")
 
 # Variables
-model="gpt-3.5-turbo"
 temperature=0.2
 timeout=30
 
 from openai import OpenAI
 # client = OpenAI()
 import httpx
-client = OpenAI(timeout=httpx.Timeout(timeout, read=timeout / 2, write=timeout / 2, connect=10))
+client = OpenAI(
+    base_url=base_url,
+    timeout=httpx.Timeout(timeout, read=timeout / 2, write=timeout / 2, connect=10)
+)
 
 # Enable to save to disk & reuse the model (for repeated queries on the same data)
 PERSIST = True
@@ -72,18 +89,33 @@ chain = False
 if os.listdir(data_dir):
   if PERSIST and os.path.exists("persist"):
     logger.debug("Reusing index...\n")
-    vectorstore = Chroma(persist_directory=persist_dir, embedding_function=OpenAIEmbeddings())
+    vectorstore = Chroma(
+      persist_directory=persist_dir,
+      embedding_function=OpenAIEmbeddings(base_url=base_url)
+    )
     index = VectorStoreIndexWrapper(vectorstore=vectorstore)
   else:
     #loader = TextLoader("data/data.txt") # Use this line if you only need data.txt
     loader = DirectoryLoader(data_dir)
     if PERSIST:
-      index = VectorstoreIndexCreator(vectorstore_kwargs={"persist_directory":persist_dir}).from_loaders([loader])
+      index = VectorstoreIndexCreator(
+        embedding=OpenAIEmbeddings(base_url=base_url),
+        vectorstore_kwargs={"persist_directory":persist_dir}
+      ).from_loaders([loader])
     else:
-      index = VectorstoreIndexCreator().from_loaders([loader])
+      index = VectorstoreIndexCreator(
+        embedding=OpenAIEmbeddings(base_url=base_url)
+      ).from_loaders([loader])
+
+  # Debug: show where embeddings client will point
+  try:
+    dbg_client = OpenAIEmbeddings(base_url=base_url).client
+    logger.debug(f"Embeddings client base_url: {dbg_client._client.base_url}")
+  except Exception as e:
+    logger.debug(f"Embeddings client base_url check failed: {e}")
 
   chain = ConversationalRetrievalChain.from_llm(
-    llm=ChatOpenAI(model="gpt-3.5-turbo"),
+    llm=ChatOpenAI(model=model, base_url=base_url),
     retriever=index.vectorstore.as_retriever(search_kwargs={"k": 1}),
   )
 
@@ -94,7 +126,7 @@ def is_uncertain(answer):
     # Check if the answer contains any of the uncertain phrases
     return any(phrase in answer.lower() for phrase in uncertain_phrases)
 
-def get_openai_response(prompt, model="gpt-3.5-turbo"):  # Adjust model as needed
+def get_openai_response(prompt, model=model):  # Adjust model as needed
     # Check if prompt is a string, if not, use the input object
     if not isinstance(prompt, str):
         messages = prompt["messages"]
