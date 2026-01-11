@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROJECT="/home/oliver/localprojects/adiutor-all/chatgpt-retrieval"
+PY="$PROJECT/sass/bin/python"
+SCRIPT="$PROJECT/chatgpt.py"
+
+exec "$PY" "$SCRIPT" "$@"
+

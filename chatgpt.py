@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import argparse
+import logging
 from pathlib import Path
 import openai
 from dotenv import load_dotenv
@@ -25,8 +26,13 @@ from langchain_openai.llms import OpenAI
 # from langchain.vectorstores import Chroma
 from langchain_community.vectorstores import Chroma
 
-# Load .env into the environment
-load_dotenv(dotenv_path=Path(".env"), override=False)
+# Load .env into the environment (both script directory and CWD)
+env_loaded = []
+script_dir = Path(__file__).resolve().parent
+for candidate in (script_dir / ".env", Path.cwd() / ".env"):
+    if candidate.is_file():
+        load_dotenv(dotenv_path=candidate, override=False)
+        env_loaded.append(str(candidate))
 
 # Prefer environment-provided key; fail if missing
 active_key = os.environ.get("OPENAI_KEY") or os.environ.get("OPENAI_API_KEY")
@@ -48,9 +54,14 @@ model=os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")
 
 from oliver_framework.utils.logging import getlogger
 logger=getlogger("chatgpt")
-logger.info(f"Using OpenAI base_url: {base_url}")
-logger.info(f"Using OpenAI key: {masked_key}")
-logger.info(f"Using OpenAI model: {model}")
+logging.getLogger().setLevel(logging.WARNING)
+for noisy_logger in ("chromadb", "langchain", "langchain_core", "langchain_community", "openai", "httpx", "numexpr"):
+    logging.getLogger(noisy_logger).setLevel(logging.WARNING)
+if env_loaded:
+    logger.debug(f"Loaded .env from: {env_loaded}")
+logger.debug(f"Using OpenAI base_url: {base_url}")
+logger.debug(f"Using OpenAI key: {masked_key}")
+logger.debug(f"Using OpenAI model: {model}")
 
 # Variables
 temperature=0.2
@@ -72,18 +83,60 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--prompt', '-p', help='Prompt for the query')
 parser.add_argument('--local', '-l', help='Use local data only')
 parser.add_argument('--data_dir', default='data/', help='Directory for data (default: data/)')
+parser.add_argument('--continue', '-c', action='store_true', dest='resume', help='Resume previous conversation')
 
 # .chroma is not usable
 # parser.add_argument('--persist_dir', default='.chroma', help='Directory for chroma dir (default: .chroma)')
-parser.add_argument('--persist_dir', default='tmp/x', help='Directory for chroma dir (default: .chroma)')
+parser.add_argument('--persist_dir', default='~/.chatgpt/chroma', help='Directory for chroma dir (default: ~/.chatgpt/chroma)')
 
 args, unknown_args = parser.parse_known_args()
 is_prompt = args.prompt if args.prompt else None
 is_local = args.local if args.local else None
 data_dir = args.data_dir
+if not os.path.isabs(data_dir) and not os.path.isdir(data_dir):
+    # Fall back to script-local data/ only if CWD data_dir is missing.
+    script_root = Path(__file__).resolve().parent
+    candidate = script_root / data_dir
+    if candidate.is_dir():
+        data_dir = str(candidate)
 persist_dir = args.persist_dir
+persist_dir = os.path.expanduser(persist_dir)
+# Resolve persist_dir relative to the script directory and ensure it exists.
+if not os.path.isabs(persist_dir):
+    script_root = Path(__file__).resolve().parent
+    persist_dir = str(script_root / persist_dir)
+os.makedirs(persist_dir, exist_ok=True)
+resume_chat = bool(args.resume)
+
+config_dir = os.path.expanduser("~/.chatgpt")
+os.makedirs(config_dir, exist_ok=True)
+history_path = os.path.join(config_dir, "chat_history.json")
+def load_chat_history():
+    if not resume_chat or not os.path.isfile(history_path):
+        return []
+    try:
+        with open(history_path, "r", encoding="utf-8") as f:
+            items = json.load(f)
+        # Convert to list of tuples expected by langchain history.
+        return [(item.get("question", ""), item.get("answer", "")) for item in items if item]
+    except Exception as exc:
+        logger.warning(f"Failed to load chat history: {exc}")
+        return []
+
+def save_chat_history(history):
+    try:
+        items = [{"question": q, "answer": a} for q, a in history]
+        with open(history_path, "w", encoding="utf-8") as f:
+            json.dump(items, f, ensure_ascii=False, indent=2)
+    except Exception as exc:
+        logger.warning(f"Failed to save chat history: {exc}")
 
 query = ' '.join(unknown_args)
+# Support piped or multi-line stdin when no positional query is provided.
+if not query and not sys.stdin.isatty():
+    stdin_payload = sys.stdin.read()
+    if stdin_payload:
+        query = stdin_payload.strip()
 
 chain = False
 if os.listdir(data_dir):
@@ -193,7 +246,7 @@ def query_both_sources(query, chat_history):
         logger.debug("Using custom data response.")
         return custom_data_response.get('answer', 'No answer found.')
 
-chat_history = []
+chat_history = load_chat_history()
 while True:
     if not query:
         if not is_prompt:
@@ -207,4 +260,5 @@ while True:
     print(result_answer)
 
     chat_history.append((query, result_answer))
+    save_chat_history(chat_history)
     query = None
