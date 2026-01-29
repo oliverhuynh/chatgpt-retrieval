@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PROJECT="/home/oliver/localprojects/adiutor-all/chatgpt-retrieval"
+PROJECT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PY="$PROJECT/sass/bin/python"
 SCRIPT="$PROJECT/chatgpt.py"
 
-exec "$PY" "$SCRIPT" "$@"
+if [[ -n "${VIRTUAL_ENV:-}" && -x "${VIRTUAL_ENV}/bin/python" ]]; then
+  PY="${VIRTUAL_ENV}/bin/python"
+elif [[ ! -x "$PY" ]]; then
+  PY="$(command -v python3)"
+fi
 
+exec "$PY" "$SCRIPT" "$@"
